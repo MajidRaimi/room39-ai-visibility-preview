@@ -1,13 +1,28 @@
 /* Room 39 — one-page offer site behavior
    - scroll-reveal via IntersectionObserver (transform/opacity only)
    - plan buttons preselect the form's "interest" field and scroll to it
-   - lead form validation + submission with a graceful preview fallback
+   - lead form validation + real submission to a free form backend
 
-   PRODUCTION NOTE: set LEAD_ENDPOINT to your form/CRM URL. When it is empty,
-   the page runs in preview mode and opens a prefilled email instead, so the
-   call to action still completes without a backend or any secret in the repo. */
-const LEAD_ENDPOINT = ""; // e.g. "https://your-form-provider.example/submit"
-const LEAD_EMAIL = "hello@room39.example"; // placeholder for preview
+   LEAD CAPTURE
+   ------------
+   The form POSTs to a free serverless form backend (no server, no secret).
+
+   Selected backend: FormSubmit.co (free, no signup). Set LEAD_ENDPOINT to
+   "https://formsubmit.co/ajax/<business-inbox>" and leave LEAD_ACCESS_KEY empty.
+   The destination address is the only value, and it is already public on the
+   site's contact page, so nothing secret ships in this static file.
+
+   Web3Forms is also supported: set LEAD_ENDPOINT to
+   "https://api.web3forms.com/submit" and paste the *public* access key. That key
+   can only deliver mail to the form owner's inbox, so it is safe to ship too.
+
+   The success panel is shown ONLY after the backend returns a real 2xx success.
+   Every other outcome (network error, non-2xx, disabled key) shows a visible
+   error with a mailto fallback so a lead is never told "received" when it was
+   not. */
+const LEAD_ENDPOINT = "https://api.web3forms.com/submit";
+const LEAD_ACCESS_KEY = ""; // public Web3Forms access key — leave empty for URL-keyed backends (Formspree/FormSubmit)
+const LEAD_EMAIL = "hello@room39.example"; // shown to visitors only if the submit fails
 
 (function () {
   "use strict";
@@ -65,6 +80,12 @@ const LEAD_EMAIL = "hello@room39.example"; // placeholder for preview
   const successPanel = document.getElementById("lead-success");
   const successPlan = document.getElementById("success-plan");
   const leadWrap = document.querySelector(".lead-wrap");
+  const button = document.getElementById("submit-btn");
+  const buttonLabel = button ? button.querySelector("span") : null;
+
+  const VALIDATION_MESSAGE = "Please add your name, clinic, a valid work email, and a city.";
+  const DEFAULT_ERROR_MESSAGE =
+    "Sorry — we could not send your request just now. Please try again, or email us directly.";
 
   const emailOk = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
@@ -99,6 +120,23 @@ const LEAD_EMAIL = "hello@room39.example"; // placeholder for preview
     };
   }
 
+  function showError(message) {
+    if (!errorBox) return;
+    errorBox.textContent = message;
+    errorBox.hidden = false;
+  }
+
+  function clearError() {
+    if (errorBox) errorBox.hidden = true;
+  }
+
+  function setSending(isSending) {
+    if (!button) return;
+    button.disabled = isSending;
+    button.setAttribute("aria-busy", isSending ? "true" : "false");
+    if (buttonLabel) buttonLabel.textContent = isSending ? "Sending…" : "Request my snapshot";
+  }
+
   function showSuccess(planLabel) {
     if (successPlan && planLabel) successPlan.textContent = planLabel;
     form.hidden = true;
@@ -106,56 +144,75 @@ const LEAD_EMAIL = "hello@room39.example"; // placeholder for preview
     if (leadWrap) leadWrap.classList.add("success");
   }
 
-  function openMailFallback(data) {
-    const subject = "AI Visibility Snapshot request — " + (data.clinic || data.name);
-    const body = [
-      "Name: " + data.name,
-      "Clinic: " + data.clinic,
-      "Email: " + data.email,
-      "Website: " + (data.website || "—"),
-      "City: " + data.city,
-      "Treatments: " + (data.treatments || "—"),
-      "Interest: " + data.interest,
-    ].join("\n");
-    window.location.href =
-      "mailto:" + LEAD_EMAIL + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+  function failureMessage(status, providerMessage) {
+    if (status === 0) {
+      return "We could not reach the server. Check your connection and try again, or email us directly.";
+    }
+    if (status === 429) {
+      return "We are getting a lot of requests right now. Please try again in a minute, or email us directly.";
+    }
+    if (providerMessage) return providerMessage;
+    return DEFAULT_ERROR_MESSAGE;
   }
 
   form.addEventListener("submit", function (event) {
     event.preventDefault();
-    if (errorBox) errorBox.hidden = true;
+    clearError();
 
     if (!validate()) {
-      if (errorBox) errorBox.hidden = false;
+      showError(VALIDATION_MESSAGE);
       const firstInvalid = fields.find((f) => f && f.classList.contains("invalid"));
       if (firstInvalid) firstInvalid.focus();
       return;
     }
 
     const data = payload();
-    const button = document.getElementById("submit-btn");
-    if (button) {
-      button.disabled = true;
-      button.querySelector("span").textContent = "Sending…";
+
+    if (!LEAD_ENDPOINT || (LEAD_ENDPOINT.indexOf("web3forms.com") !== -1 && !LEAD_ACCESS_KEY) || typeof fetch !== "function") {
+      // Capture is not configured. Never fake success — a lost lead must be visible.
+      showError(DEFAULT_ERROR_MESSAGE);
+      return;
     }
 
-    const finish = () => showSuccess(data.interest);
+    setSending(true);
 
-    if (LEAD_ENDPOINT && typeof fetch === "function") {
-      fetch(LEAD_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(data),
-      })
-        .then(() => finish())
-        .catch(() => {
-          // Never strand the visitor: fall back to email, then confirm.
-          openMailFallback(data);
-          finish();
-        });
+    var isFormSubmit = LEAD_ENDPOINT.indexOf("formsubmit.co") !== -1;
+    var body;
+    if (LEAD_ACCESS_KEY) {
+      body = Object.assign({ access_key: LEAD_ACCESS_KEY, subject: "New AI Visibility Snapshot request", from_name: "Room 39 site" }, data);
+    } else if (isFormSubmit) {
+      // FormSubmit control fields: no captcha (AJAX), readable table, clear subject.
+      body = Object.assign({ _subject: "New AI Visibility Snapshot request", _template: "table", _captcha: "false" }, data);
     } else {
-      openMailFallback(data);
-      finish();
+      body = data;
     }
+
+    fetch(LEAD_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then(function (response) {
+        return response
+          .json()
+          .catch(function () {
+            return {};
+          })
+          .then(function (body) {
+            var ok = response.ok && body && body.success !== false;
+            if (!ok) {
+              throw { status: response.status, message: body && body.message };
+            }
+            showSuccess(data.interest);
+          });
+      })
+      .catch(function (err) {
+        setSending(false);
+        var status = err && typeof err.status === "number" ? err.status : 0;
+        showError(failureMessage(status, err && err.message));
+        if (errorBox && LEAD_EMAIL && LEAD_EMAIL.indexOf(".example") === -1) {
+          errorBox.innerHTML += ' Or email <a href="mailto:' + LEAD_EMAIL + '">' + LEAD_EMAIL + "</a>.";
+        }
+      });
   });
 })();
