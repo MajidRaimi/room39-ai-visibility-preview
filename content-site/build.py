@@ -95,11 +95,25 @@ def parse_title_meta(text: str) -> dict:
 
 
 def extract_body(text: str) -> str:
-    """Body = from the '# H1' line to end (includes Sources)."""
-    m = re.search(r"^#\s+.+$", text, re.MULTILINE)
-    if not m:
+    """Body = from the content '# H1' line to end (includes Sources).
+
+    The source drafts carry a leading '# Draft — Page N: …' marker plus a
+    'Target query / SEO fields' scaffolding block before the real content H1.
+    Start at the first top-level H1 that is not the draft marker so the
+    scaffolding never reaches the published page.
+    """
+    matches = list(re.finditer(r"^#\s+.+$", text, re.MULTILINE))
+    if not matches:
         raise ValueError("no H1 found")
+    content = [m for m in matches if not re.match(r"#\s*Draft\b", m.group(0))]
+    m = content[0] if content else matches[-1]
     return text[m.start():].strip()
+
+
+def extract_disclosure(raw: str) -> str | None:
+    """Pull the required affiliate disclosure out of the draft scaffolding."""
+    m = re.search(r"\*\*Affiliate disclosure[^:]*:\*\*\s*(.+)", raw)
+    return m.group(1).strip() if m else None
 
 
 def rewrite_links(text: str) -> str:
@@ -266,6 +280,7 @@ def build() -> None:
             raise ValueError(f"missing SEO fields in {fname}: {meta}")
         body_md = extract_body(raw)
         h1 = plain(body_md.splitlines()[0].lstrip("# ").strip())
+        disclosure = extract_disclosure(raw)
         body_md = rewrite_links(body_md)
         faqs = extract_faq(body_md)
         slug = "/" + meta["slug"].strip("/") + "/"
@@ -282,6 +297,13 @@ def build() -> None:
             f'<span class="updated">Last updated {LAST_UPDATED}</span></p>'
         )
         article_html = article_html.replace("</h1>", "</h1>\n" + byline, 1)
+        if disclosure:
+            callout = (
+                '<p class="affiliate-disclosure"><strong>Affiliate disclosure:</strong> '
+                + html.escape(disclosure)
+                + "</p>"
+            )
+            article_html = article_html.replace(byline, byline + "\n" + callout, 1)
 
         page_html = (
             head(page, faqs)
