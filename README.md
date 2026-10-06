@@ -31,24 +31,35 @@ Lead capture uses a **free, serverless form backend**. The form POSTs JSON to
 `LEAD_ENDPOINT` in `script.js` and shows the success panel **only on a real 2xx
 response**; any network error or non-2xx shows a visible error instead.
 
-Default backend: **Web3Forms** (free tier, no server). Set the public access key:
+Selected backend: **FormSubmit.co** (free tier, no signup, no secret in the
+repo). Point `LEAD_ENDPOINT` at the business inbox and leave `LEAD_ACCESS_KEY`
+empty:
 
 ```js
-const LEAD_ENDPOINT = "https://api.web3forms.com/submit";
-const LEAD_ACCESS_KEY = "<public Web3Forms access key>";
+const LEAD_ENDPOINT = "https://formsubmit.co/ajax/<business-inbox>";
+const LEAD_ACCESS_KEY = "";
+const LEAD_EMAIL = "<business-inbox>";
 ```
 
-The access key is a *public form key*: it can only deliver mail to the form
-owner's inbox, so it is safe to commit. No other secret is used.
+One-time activation (FormSubmit requirement): the **first** submission triggers a
+confirmation email to `<business-inbox>`; the address is only active after
+someone opens that email and clicks the activation link. After activation, every
+submission is forwarded to the inbox. Limit: 50 submissions/month on the free
+tier.
 
-URL-keyed backends (Formspree, FormSubmit, Getform) work too — set
-`LEAD_ENDPOINT` to the provider URL and leave `LEAD_ACCESS_KEY` empty.
+Web3Forms is also supported. Set `LEAD_ENDPOINT` to
+`https://api.web3forms.com/submit` and paste the *public* access key in
+`LEAD_ACCESS_KEY`. That key can only deliver to the form owner's inbox, so it is
+safe to commit. No other secret is used anywhere in the repo.
 
-Also replace `LEAD_EMAIL` with the real business inbox so the failure message
-offers a working mailto fallback.
+Finally, set `LEAD_EMAIL` to the same real inbox so the failure message offers a
+working mailto fallback.
 
-If `LEAD_ENDPOINT` is a Web3Forms URL with no key, or fetch is unavailable, the
-form shows an error and never reports a false success.
+If the endpoint is unconfigured (or a Web3Forms URL has no key), or `fetch` is
+unavailable, the form shows an error and never reports a false success. The
+submission body for FormSubmit includes `_captcha: "false"` and
+`_template: "table"` so the AJAX request is not blocked and the email is
+readable.
 
 ## Rollback
 

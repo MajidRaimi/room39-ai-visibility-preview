@@ -5,10 +5,16 @@
 
    LEAD CAPTURE
    ------------
-   The form POSTs to Web3Forms (free tier, no server required). The value in
-   LEAD_ACCESS_KEY is a *public* form key: it can only deliver mail to the form
-   owner's inbox, so it is safe to ship in this static file. No other secret is
-   used anywhere in this repo.
+   The form POSTs to a free serverless form backend (no server, no secret).
+
+   Selected backend: FormSubmit.co (free, no signup). Set LEAD_ENDPOINT to
+   "https://formsubmit.co/ajax/<business-inbox>" and leave LEAD_ACCESS_KEY empty.
+   The destination address is the only value, and it is already public on the
+   site's contact page, so nothing secret ships in this static file.
+
+   Web3Forms is also supported: set LEAD_ENDPOINT to
+   "https://api.web3forms.com/submit" and paste the *public* access key. That key
+   can only deliver mail to the form owner's inbox, so it is safe to ship too.
 
    The success panel is shown ONLY after the backend returns a real 2xx success.
    Every other outcome (network error, non-2xx, disabled key) shows a visible
@@ -170,9 +176,16 @@ const LEAD_EMAIL = "hello@room39.example"; // shown to visitors only if the subm
 
     setSending(true);
 
-    var body = LEAD_ACCESS_KEY
-      ? Object.assign({ access_key: LEAD_ACCESS_KEY, subject: "New AI Visibility Snapshot request", from_name: "Room 39 site" }, data)
-      : data;
+    var isFormSubmit = LEAD_ENDPOINT.indexOf("formsubmit.co") !== -1;
+    var body;
+    if (LEAD_ACCESS_KEY) {
+      body = Object.assign({ access_key: LEAD_ACCESS_KEY, subject: "New AI Visibility Snapshot request", from_name: "Room 39 site" }, data);
+    } else if (isFormSubmit) {
+      // FormSubmit control fields: no captcha (AJAX), readable table, clear subject.
+      body = Object.assign({ _subject: "New AI Visibility Snapshot request", _template: "table", _captcha: "false" }, data);
+    } else {
+      body = data;
+    }
 
     fetch(LEAD_ENDPOINT, {
       method: "POST",
